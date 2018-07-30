@@ -1,0 +1,187 @@
+{\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang16393{\fonttbl{\f0\fnil\fcharset0 Calibri;}}
+{\*\generator Riched20 10.0.16299}\viewkind4\uc1 
+\pard\sa200\sl276\slmult1\f0\fs22\lang9 #CREATE SCHEMA TABLE ON S3 DATA#\~\~\par
+#Separate tables for Nov and Dec dataset.\par
+\par
+\~ drop table yellow_trip_Nov_columns ;\par
+\~ drop table yellow_trip_Dec_columns ;\par
+\par
+\~ CREATE EXTERNAL TABLE IF NOT EXISTS yellow_trip_Nov_columns(VendorID int ,tpep_pickup_datetime TIMESTAMP,tpep_dropoff_datetime TIMESTAMP,Passenger_count int ,Trip_distance DOUBLE,RateCodeID int,Store_and_fwd_flag VARCHAR(2),PULocationID DOUBLE,DULocationID DOUBLE,Payment_type int ,Fare_amount double ,Extra double ,MTA_tax decimal ,Improvement_surcharge decimal ,\~Tip_amount double ,Tolls_amount double , Total_amount double )\par
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','\par
+location 's3://nyc-tlc-hive/nov/'\par
+ tblproperties("skip.header.line.count"="2");\par
+\par
+\~\~\~ CREATE EXTERNAL TABLE IF NOT EXISTS yellow_trip_Dec_columns(VendorID int ,\par
+tpep_pickup_datetime TIMESTAMP,tpep_dropoff_datetime TIMESTAMP,Passenger_count int ,\~ Trip_distance DOUBLE,RateCodeID INT,Store_and_fwd_flag VARCHAR(2),PULocationID DOUBLE,DULoactionID DOUBLE,Payment_type int,Fare_amount double ,Extra double ,MTA_tax decimal ,Improvement_surcharge decimal ,\~\~ Tip_amount double ,Tolls_amount double , Total_amount double )\par
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','\par
+\~ location 's3://nyc-tlc-hive/dec/'\par
+\~ tblproperties("skip.header.line.count"="2");\par
+\par
+\~\~\~ \~#Viewing few data from the external tables loaded.\par
+\par
+select * from yellow_trip_nov_columns limit 10 ;\~\~\par
+select * from yellow_trip_dec_columns limit 10 ;\~\~\par
+\par
+drop table yellow_trip_columns;\par
+\par
+#-----creating a UNION of datas of both the table#\~\par
+\par
+CREATE TABLE yellow_trip_columns AS SELECT * FROM ( SELECT *\par
+FROM yellow_trip_nov_columns UNION ALL\par
+SELECT *FROM yellow_trip_dec_columns ) tmp;\~\par
+\par
+#-------------Setting Up few defaults for partitioning\par
+\par
+SET hive.exec.dynamic.partition = true;\par
+SET hive.exec.dynamic.partition.mode = nonstrict;\par
+\par
+#Creating partitioned table based on year and month.\par
+\par
+drop table yellow_trip_partitioned_year_month;\par
+\par
+create external table if not exists yellow_trip_partitioned_year_month(VendorID int ,tpep_pickup_datetime TIMESTAMP,tpep_dropoff_datetime TIMESTAMP,Passenger_count int ,Trip_distance DOUBLE,RateCodeID INT,Store_and_fwd_flag VARCHAR(2),PULocationID DOUBLE, DULocationID DOUBLE,Payment_type int,Fare_amount double ,Extra double ,MTA_tax decimal ,Improvement_surcharge decimal ,\~ Tip_amount double ,Tolls_amount double , Total_amount double ) partitioned by (yr int, mnth int)\par
+location 's3://nyc-tlc-hive/nyc_partition_year_month';\par
+\par
+insert overwrite table yellow_trip_partitioned_year_month\~ partition(yr, mnth)\par
+select VendorID ,tpep_pickup_datetime ,tpep_dropoff_datetime ,Passenger_count , Trip_distance,RateCodeID,Store_and_fwd_flag,pulocationid,dulocationid,Payment_type,Fare_amount,Extra,MTA_tax,Improvement_surcharge,\~Tip_amount,Tolls_amount, Total_amount, year(to_date(tpep_pickup_datetime)) as yr, month(to_date(tpep_pickup_datetime)) as mnth from yellow_trip_columns;\par
+\par
+\par
+\par
+#----------------Finding the count of the vendors under the TREP provider-------------------#\par
+\par
+\par
+select VendorId ,count(VendorId) as Count_ID from yellow_trip_partitioned_year_month group by vendorid;\par
+\par
+\par
+#------------------------Finding Vendors doing a bad job in providing the records #\par
+\par
+\par
+select VendorId,count(VendorID) from yellow_trip_partitioned_year_month where passenger_count=0 OR trip_distance <0 OR total_amount < 0 OR fare_amount < 0 OR tip_amount < 0 OR extra < 0 OR mta_tax < 0 OR tolls_amount < 0 OR improvement_surcharge < 0 OR unix_timestamp(tpep_dropoff_datetime)<=unix_timestamp(tpep_pickup_datetime) OR (PULocationID=DULocationID) OR (yr != 2017 AND mnth IN ("11","12")) group by VendorId ;\par
+\par
+\par
+#---------Vendor 1 is not doing the job correctly for providing the correct data into the records .#\par
+\par
+\par
+#Creating a table with the cleaned data #\par
+\par
+\par
+################################################################################################\par
+\par
+\par
+drop table yellow_trip_filtered ;\par
+\par
+\par
+create table if not exists yellow_trip_filtered\par
+(VendorID int ,tpep_pickup_datetime TIMESTAMP,tpep_dropoff_datetime TIMESTAMP,Passenger_count int , Trip_distance DOUBLE,RateCodeID INT,Store_and_fwd_flag VARCHAR(2),PULocationID DOUBLE,DULocationID DOUBLE,Payment_type int,Fare_amount double ,Extra double ,MTA_tax decimal ,Improvement_surcharge decimal ,\~Tip_amount double ,Tolls_amount double , Total_amount double,yr int,mnth int)\par
+location 's3://nyc-tlc-hive/yellow_trip_filtered';\par
+\par
+\par
+\par
+insert into table yellow_trip_filtered select VendorID ,tpep_pickup_datetime ,tpep_dropoff_datetime ,Passenger_count ,\par
+Trip_distance,RateCodeID,Store_and_fwd_flag,PULocationID,\par
+DULocationID,Payment_type,Fare_amount,\par
+ Extra,MTA_tax,Improvement_surcharge,\~ Tip_amount,Tolls_amount, Total_amount,yr,mnth from yellow_trip_partitioned_year_month where passenger_count> 0 and trip_distance > 0\~\par
+\par
+AND fare_amount > 0\~ AND total_amount > 0 AND tip_amount >= 0 AND extra >= 0 AND mta_tax > 0 AND tolls_amount >= 0 AND improvement_surcharge > 0 AND unix_timestamp(tpep_dropoff_datetime)>unix_timestamp(tpep_pickup_datetime) AND (PULocationID!=DULocationID) AND (yr = 2017 AND mnth IN ("11","12"));\par
+\par
+\par
+SELECT count(*) as count from yellow_trip_filtered;\par
+\par
+###########################################################################################\par
+\par
+\par
+Analysis\par
+\par
+\par
+###########################################################################################\par
+\par
+\par
+#1.Compare the average fare for November and December.\par
+\par
+\par
+select avg(fare_amount) as AVG_NOV from yellow_trip_filtered where mnth = 11 ;\par
+\par
+select avg(fare_amount) as AVG_DEC from yellow_trip_filtered where\~ mnth = 12 ;\par
+\par
+#November avg is good as its value is  13.04and\par
+Dec 12.85\par
+#2. Explore the \lquote number of passengers per trip\rquote\~\par
+\par
+select passenger_count,count(*) as count from yellow_trip_filtered group by passenger_count ;\~\par
+\par
+\par
+#passenger_count as 1 is\~ , travelled the most. So people love travelling alone \par
+And the count of 1 is 13150946\par
+\par
+#3. Which is the most preferred mode of payment?\par
+select payment_type,count(*) from yellow_trip_filtered group by payment_type ;\~\par
+\par
+#Prefered payemnt type is 1 credit card .\par
+\par
+#4. What is the average tip paid?\par
+select avg(tip_amount) from yellow_trip_filtered ;\par
+\par
+#1.83 avg tip paid\par
+\par
+SELECT percentile(bigint(tip_amount), array(0.25, 0.5,0.75)) from yellow_trip_filtered;\par
+\par
+#0,1,2 percentile values\par
+#yes the \lquote average tip\rquote  is a representative statistic (of the central tendency) of \lquote tip amount paid\rquote .\par
+\par
+\par
+#5. Explore the \lquote Extra\rquote  (charge) variable - what is the fraction of total trips where an extra charge is levied?\par
+\par
+\par
+SELECT\~ sum(if(extra>0, 1,0)) as Trips_with_extra,sum(if(extra>0, 1,0))/count(*) as Fraction_of_Total_Trips\par
+\par
+FROM yellow_trip_filtered;\par
+#0.46 fraction\par
+\par
+\par
+#############################################################################################\par
+\par
+\par
+Analysis-2\par
+\par
+\par
+###########################################################################################\par
+\par
+\par
+1. select passenger_count, corr(passenger_count,tip_amount) from yellow_trip_filtered group by passenger_count;\par
+select corr(passenger_count,tip_amount) from yellow_trip_filtered;\par
+ #-0.005 correlation\par
+\par
+SELECT passenger_count,sum(tip_amount) FROM yellow_trip_filtered GROUP BY passenger_count ORDER BY passenger_count ;\par
+\par
+2. Binnng the data \par
+Create 5 buckets of 'tip-paid' :[0-5],[5-10][10-15],[15-20],>20\par
+\par
+ \par
+select round(sum(if((tip_amount >= 0) AND (tip_amount < 5),1,0))*100/count(*),2) as tipbetween0to4,\par
+       round(sum(if((tip_amount >= 5) AND (tip_amount < 10),1,0))*100/count(*),2) as tipbetween5to9,\par
+\tab    round(sum(if((tip_amount >= 10) AND (tip_amount < 15),1,0))*100/count(*),2) as tipbetween10to14,\par
+\tab    round(sum(if((tip_amount >= 15) AND (tip_amount < 20),1,0))*100/count(*),2) as tipbetween15to19,\par
+\tab    round(sum(if((tip_amount >= 20),1,0))*100/count(*),2) as tipmorethan20\par
+from tlc_yellowtaxi_partitioned_year_month_filtered where passenger_count> 0 and trip_distance > 0\~\par
+\par
+AND fare_amount > 0\~ AND total_amount > 0 AND tip_amount >= 0 AND extra >= 0 AND mta_tax > 0 AND tolls_amount >= 0 AND improvement_surcharge > 0 AND unix_timestamp(tpep_dropoff_datetime)>unix_timestamp(tpep_pickup_datetime) AND (PULocationID!=DULocationID) AND (yr = 2017 AND mnth IN ("11","12"));\par
+\par
+\par
+\par
+3. Which month has a greater average \lquote speed\rquote  - November or December?\par
+\par
+select avg(trip_distance/((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime))/3600)) as Average-speed  from yellow_trip_filtered where mnth = 11  ; \par
+#avg speed - 12.82\par
+select avg(trip_distance/((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime))/3600)) as Average-speed  from yellow_trip_filtered where mnth = 12  ;\par
+\par
+4.Analyse the average speed of the most happening days of the year i.e. 31st December (New year\rquote s eve) and 25th December (Christmas Eve) and compare it with the overall average.\~\par
+#-avg speed12.73\par
+select avg(trip_distance/((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime))/3600)) as Average-speed  from yellow_trip_filtered where mnth in (11,12) AND  DAY(tpep_pickup_datetime) in(25,31) ;\par
+#avg speedfestive days =15.49\par
+select avg(trip_distance/((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime))/3600)) as Average-speed  from yellow_trip_filtered ;\par
+\par
+#avg speed overall 12.75\par
+\par
+\par
+}
+ 
